@@ -1,0 +1,390 @@
+use crate::config::CommandConfig;
+use crate::core::executor::{CommandExecutor, DefaultExecutor};
+use chrono::{DateTime, Duration, Utc};
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
+use std::time::Duration as StdDuration;
+use tokio::time::{sleep, timeout};
+use tracing::{error, info, warn};
+
+/// Represents a command that is scheduled to run at a specific time
+///
+/// This struct combines a command configuration with its next scheduled execution time.
+/// It implements ordering traits to allow commands to be sorted by their next run time.
+#[derive(Debug)]
+struct ScheduledCommand {
+    command: CommandConfig,
+    next_run: DateTime<Utc>,
+}
+
+impl PartialEq for ScheduledCommand {
+    fn eq(&self, other: &Self) -> bool {
+        self.next_run == other.next_run
+    }
+}
+
+impl Eq for ScheduledCommand {}
+
+impl PartialOrd for ScheduledCommand {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ScheduledCommand {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.next_run.cmp(&self.next_run)
+    }
+}
+
+/// Manages the scheduling and execution of commands
+///
+/// The scheduler maintains a priority queue of commands sorted by their next execution time.
+/// It handles immediate execution of commands, enforces minimum intervals between executions,
+/// and manages system sleep events to ensure commands are executed as expected.
+pub struct Scheduler {
+    commands: BinaryHeap<ScheduledCommand>,
+    executor: Box<dyn CommandExecutor + Send + Sync>,
+    min_interval_seconds: u64,
+    last_execution_time: Option<DateTime<Utc>>,
+    last_wake_time: Option<DateTime<Utc>>,
+}
+
+impl Scheduler {
+    /// Creates a new scheduler with the given commands
+    ///
+    /// Initializes the scheduler with a set of commands, setting up their initial schedules.
+    /// Commands marked as immediate will be executed right away, while others will be
+    /// scheduled for their first run based on their interval.
+    ///
+    /// # Arguments
+    ///
+    /// * `commands` - A vector of command configurations to be scheduled
+    pub fn new(commands: Vec<CommandConfig>) -> Self {
+        let mut scheduler = Scheduler {
+            commands: BinaryHeap::new(),
+            executor: Box::new(DefaultExecutor),
+            min_interval_seconds: 30,
+            last_execution_time: None,
+            last_wake_time: Some(Utc::now()),
+        };
+
+        info!("Scheduling {} commands", commands.len());
+        for command in commands {
+            if command.enabled {
+                info!("Scheduling command: {}", command.name);
+                if command.immediate {
+                    info!("Command '{}' will run immediately", command.name);
+                    let command_clone = command.clone();
+                    tokio::spawn(async move {
+                        let mut temp_scheduler = Scheduler {
+                            commands: BinaryHeap::new(),
+                            executor: Box::new(DefaultExecutor),
+                            min_interval_seconds: 30,
+                            last_execution_time: None,
+                            last_wake_time: Some(Utc::now()),
+                        };
+                        temp_scheduler.execute_command(command_clone).await;
+                    });
+                }
+                let next_run = Utc::now() + Duration::minutes(command.interval_minutes as i64);
+                scheduler
+                    .commands
+                    .push(ScheduledCommand { command, next_run });
+            }
+        }
+
+        scheduler
+    }
+
+    /// Detects and handles system sleep events
+    ///
+    /// This method checks if the system has been asleep for an extended period (more than 5 minutes)
+    /// and executes any commands that were scheduled to run during that time. It maintains the
+    /// regular schedule for future executions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut scheduler = Scheduler::new(commands);
+    /// scheduler.handle_sleep_resume().await;
+    /// ```
+    pub async fn handle_sleep_resume(&mut self) {
+        let now = Utc::now();
+
+        if let Some(last_wake) = self.last_wake_time {
+            let time_since_last_wake = now.signed_duration_since(last_wake);
+
+            let was_sleeping = time_since_last_wake.num_minutes() > 5
+                && (self.last_execution_time.is_none()
+                    || now
+                        .signed_duration_since(self.last_execution_time.unwrap())
+                        .num_minutes()
+                        > 5);
+
+            if was_sleeping {
+                info!(
+                    "Detected system sleep of {} minutes",
+                    time_since_last_wake.num_minutes()
+                );
+
+                let current_commands = std::mem::take(&mut self.commands);
+                let command_list: Vec<_> = current_commands.into_iter().collect();
+
+                let (missed_commands, future_commands): (Vec<_>, Vec<_>) = command_list
+                    .into_iter()
+                    .partition(|scheduled| scheduled.next_run < now);
+
+                for scheduled in future_commands {
+                    self.commands.push(scheduled);
+                }
+
+                let missed_count = missed_commands.len();
+                if missed_count > 0 {
+                    info!(
+                        "Found {} commands that should have run during sleep",
+                        missed_count
+                    );
+
+                    let max_immediate_executions = 10; // Configurable limit
+                    let (immediate_executions, reschedule_rest) =
+                        if missed_commands.len() > max_immediate_executions {
+                            missed_commands.split_at(max_immediate_executions)
+                        } else {
+                            (missed_commands.as_slice(), &[][..])
+                        };
+
+                    for scheduled in immediate_executions {
+                        info!(
+                            "Executing missed command: {} (originally scheduled for {})",
+                            scheduled.command.name, scheduled.next_run
+                        );
+                        self.execute_command(scheduled.command.clone()).await;
+                    }
+
+                    for scheduled in reschedule_rest {
+                        info!(
+                            "Rescheduling missed command without execution: {} (was scheduled for {})",
+                            scheduled.command.name, scheduled.next_run
+                        );
+                        self.schedule_next_run(scheduled.command.clone());
+                    }
+                }
+            }
+        }
+
+        // Update the last wake time
+        self.last_wake_time = Some(now);
+    }
+
+    /// Runs the scheduler loop, executing commands at their scheduled times
+    pub async fn run(&mut self) {
+        info!("Starting scheduler loop");
+        loop {
+            self.handle_sleep_resume().await;
+
+            if self.commands.is_empty() {
+                info!("No commands scheduled, sleeping for 60 seconds");
+                sleep(StdDuration::from_secs(60)).await;
+                continue;
+            }
+
+            let now = Utc::now();
+
+            if let Some(last_time) = self.last_execution_time {
+                let time_since_last = now.signed_duration_since(last_time);
+                let min_interval_millis = (self.min_interval_seconds * 1000) as i64;
+
+                if time_since_last.num_milliseconds() < min_interval_millis {
+                    let wait_millis = min_interval_millis - time_since_last.num_milliseconds();
+                    let wait_duration = StdDuration::from_millis(wait_millis as u64);
+                    info!(
+                        "Enforcing minimum interval: waiting for {} milliseconds before next execution",
+                        wait_millis
+                    );
+                    sleep(wait_duration).await;
+                    continue;
+                }
+            }
+
+            if let Some(scheduled) = self.commands.peek() {
+                let time_until_next = scheduled.next_run.signed_duration_since(now);
+
+                if time_until_next.num_milliseconds() <= 0 {
+                    if let Some(command_to_run) = self.commands.pop() {
+                        let cmd_name = command_to_run.command.name.clone();
+                        info!("Executing command: {}", cmd_name);
+                        self.last_execution_time = Some(Utc::now());
+
+                        let execution_timeout = StdDuration::from_secs(300);
+                        match timeout(
+                            execution_timeout,
+                            self.execute_command(command_to_run.command.clone()),
+                        )
+                        .await
+                        {
+                            Ok(_) => {
+                                info!("Command '{}' execution completed within timeout", cmd_name);
+                            }
+                            Err(_) => {
+                                warn!(
+                                    "Command '{}' execution timed out after {:?}",
+                                    cmd_name, execution_timeout
+                                );
+                                self.schedule_next_run(command_to_run.command);
+                            }
+                        }
+                    }
+                } else {
+                    let sleep_time_secs = std::cmp::max(time_until_next.num_seconds(), 1) as u64;
+                    let sleep_time_secs = std::cmp::min(sleep_time_secs, 3600);
+                    info!(
+                        "Sleeping for {} seconds until next command",
+                        sleep_time_secs
+                    );
+                    sleep(StdDuration::from_secs(sleep_time_secs)).await;
+                }
+            } else {
+                warn!("Command queue unexpectedly empty, sleeping for 1 second");
+                sleep(StdDuration::from_secs(1)).await;
+            }
+        }
+    }
+
+    /// Schedules the next run of a command based on its interval
+    fn schedule_next_run(&mut self, command: CommandConfig) {
+        let now = Utc::now();
+        let interval_seconds = std::cmp::max(
+            (command.interval_minutes * 60.0) as i64,
+            self.min_interval_seconds as i64,
+        );
+        let next_run = now + Duration::seconds(interval_seconds);
+
+        let interval_display = if interval_seconds < 60 {
+            format!("{} seconds", interval_seconds)
+        } else if interval_seconds < 3600 {
+            format!("{:.1} minutes", interval_seconds as f64 / 60.0)
+        } else {
+            format!("{:.1} hours", interval_seconds as f64 / 3600.0)
+        };
+
+        info!(
+            "Command '{}' next scheduled for {} (in {})",
+            command.name, next_run, interval_display
+        );
+
+        self.commands.push(ScheduledCommand { command, next_run });
+    }
+
+    /// Executes a command and handles its output
+    async fn execute_command(&mut self, command: CommandConfig) {
+        let execution_start = Utc::now();
+
+        match self.executor.execute(&command).await {
+            Ok(output) => {
+                info!("Command '{}' completed successfully", command.name);
+                if !output.stdout.is_empty() {
+                    info!("Output: {}", String::from_utf8_lossy(&output.stdout));
+                }
+                if !output.stderr.is_empty() {
+                    error!("Error output: {}", String::from_utf8_lossy(&output.stderr));
+                }
+            }
+            Err(e) => {
+                error!("Failed to execute command '{}': {}", command.name, e);
+            }
+        }
+
+        let execution_duration = Utc::now().signed_duration_since(execution_start);
+        info!(
+            "Command '{}' execution took {} milliseconds",
+            command.name,
+            execution_duration.num_milliseconds()
+        );
+
+        self.schedule_next_run(command);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_command(name: &str, interval_minutes: f64) -> CommandConfig {
+        CommandConfig {
+            name: name.to_string(),
+            command: "echo test".to_string(),
+            interval_minutes,
+            max_runtime_minutes: Some(5),
+            enabled: true,
+            working_dir: None,
+            environment: None,
+            immediate: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_scheduler_initialization() {
+        let commands = vec![
+            create_test_command("test1", 1.0),
+            create_test_command("test2", 2.0),
+        ];
+        let scheduler = Scheduler::new(commands.clone());
+
+        assert_eq!(scheduler.commands.len(), 2);
+        assert!(scheduler.last_execution_time.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_schedule_next_run() {
+        let mut scheduler = Scheduler::new(vec![]);
+        let command = create_test_command("test", 1.0);
+
+        scheduler.schedule_next_run(command.clone());
+        assert_eq!(scheduler.commands.len(), 1);
+
+        let scheduled = scheduler.commands.peek().unwrap();
+        assert_eq!(scheduled.command.name, "test");
+        assert!(scheduled.next_run > Utc::now());
+    }
+
+    #[tokio::test]
+    async fn test_command_ordering() {
+        let mut scheduler = Scheduler::new(vec![]);
+        let command1 = create_test_command("test1", 1.0);
+        let command2 = create_test_command("test2", 2.0);
+
+        scheduler.schedule_next_run(command1);
+        scheduler.schedule_next_run(command2);
+
+        let first = scheduler.commands.pop().unwrap();
+        let second = scheduler.commands.pop().unwrap();
+
+        assert!(first.next_run < second.next_run);
+    }
+
+    #[tokio::test]
+    async fn test_disabled_commands() {
+        let mut commands = vec![
+            create_test_command("enabled", 1.0),
+            create_test_command("disabled", 1.0),
+        ];
+        commands[1].enabled = false;
+
+        let scheduler = Scheduler::new(commands);
+        assert_eq!(scheduler.commands.len(), 1);
+        assert_eq!(scheduler.commands.peek().unwrap().command.name, "enabled");
+    }
+
+    #[tokio::test]
+    async fn test_immediate_execution() {
+        let mut commands = vec![
+            create_test_command("normal", 1.0),
+            create_test_command("immediate", 1.0),
+        ];
+        commands[1].immediate = true;
+
+        let scheduler = Scheduler::new(commands);
+        assert_eq!(scheduler.commands.len(), 2);
+    }
+}
