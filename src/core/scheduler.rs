@@ -1,8 +1,10 @@
 use crate::config::CommandConfig;
 use crate::core::executor::{CommandExecutor, DefaultExecutor};
+use crate::state::StateManager;
 use chrono::{DateTime, Duration, Utc};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
+use std::path::PathBuf;
 use std::time::Duration as StdDuration;
 use tokio::time::{sleep, timeout};
 use tracing::{error, info, warn};
@@ -48,6 +50,7 @@ pub struct Scheduler {
     min_interval_seconds: u64,
     last_execution_time: Option<DateTime<Utc>>,
     last_wake_time: Option<DateTime<Utc>>,
+    state_manager: StateManager,
 }
 
 impl Scheduler {
@@ -60,34 +63,48 @@ impl Scheduler {
     /// # Arguments
     ///
     /// * `commands` - A vector of command configurations to be scheduled
-    pub fn new(commands: Vec<CommandConfig>) -> Self {
+    pub fn new(commands: Vec<CommandConfig>, state_path: PathBuf) -> Self {
+        let state_path_for_manager = state_path.clone();
+
+        let state_manager =
+            StateManager::new(state_path_for_manager).expect("Failed to initialize state manager");
+
+        let existing_states = state_manager.load_command_states().unwrap_or_default();
+        let mut state_map = existing_states
+            .into_iter()
+            .map(|state| (state.name.clone(), state))
+            .collect::<std::collections::HashMap<_, _>>();
+
         let mut scheduler = Scheduler {
             commands: BinaryHeap::new(),
             executor: Box::new(DefaultExecutor),
             min_interval_seconds: 30,
             last_execution_time: None,
             last_wake_time: Some(Utc::now()),
+            state_manager,
         };
 
         info!("Scheduling {} commands", commands.len());
         for command in commands {
             if command.enabled {
                 info!("Scheduling command: {}", command.name);
-                if command.immediate {
-                    info!("Command '{}' will run immediately", command.name);
-                    let command_clone = command.clone();
-                    tokio::spawn(async move {
-                        let mut temp_scheduler = Scheduler {
-                            commands: BinaryHeap::new(),
-                            executor: Box::new(DefaultExecutor),
-                            min_interval_seconds: 30,
-                            last_execution_time: None,
-                            last_wake_time: Some(Utc::now()),
-                        };
-                        temp_scheduler.execute_command(command_clone).await;
-                    });
-                }
-                let next_run = Utc::now() + Duration::minutes(command.interval_minutes as i64);
+                let next_run = if let Some(state) = state_map.remove(&command.name) {
+                    info!("Found existing state for command '{}'", command.name);
+                    state.next_scheduled
+                } else {
+                    if command.immediate {
+                        info!("Command '{}' will run immediately", command.name);
+                        let state_path_clone = state_path.clone();
+                        let command_clone = command.clone();
+                        tokio::spawn(async move {
+                            let mut temp_scheduler =
+                                Scheduler::new(vec![command_clone.clone()], state_path_clone);
+                            temp_scheduler.execute_command(command_clone).await;
+                        });
+                    }
+                    Utc::now() + Duration::minutes(command.interval_minutes as i64)
+                };
+
                 scheduler
                     .commands
                     .push(ScheduledCommand { command, next_run });
@@ -252,7 +269,7 @@ impl Scheduler {
     }
 
     /// Schedules the next run of a command based on its interval
-    fn schedule_next_run(&mut self, command: CommandConfig) {
+    fn schedule_next_run(&mut self, command: CommandConfig) -> DateTime<Utc> {
         let now = Utc::now();
         let interval_seconds = std::cmp::max(
             (command.interval_minutes * 60.0) as i64,
@@ -274,6 +291,7 @@ impl Scheduler {
         );
 
         self.commands.push(ScheduledCommand { command, next_run });
+        next_run
     }
 
     /// Executes a command and handles its output
@@ -302,13 +320,22 @@ impl Scheduler {
             execution_duration.num_milliseconds()
         );
 
-        self.schedule_next_run(command);
+        // Save state after execution
+        let next_run = self.schedule_next_run(command.clone());
+        if let Err(e) =
+            self.state_manager
+                .save_command_state(&command, Some(execution_start), next_run)
+        {
+            error!("Failed to save state for command '{}': {}", command.name, e);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use tempfile::NamedTempFile;
 
     fn create_test_command(name: &str, interval_minutes: f64) -> CommandConfig {
         CommandConfig {
@@ -323,13 +350,18 @@ mod tests {
         }
     }
 
+    fn create_temp_state_path() -> PathBuf {
+        let temp_file = NamedTempFile::new().unwrap();
+        temp_file.path().to_path_buf()
+    }
+
     #[tokio::test]
     async fn test_scheduler_initialization() {
         let commands = vec![
             create_test_command("test1", 1.0),
             create_test_command("test2", 2.0),
         ];
-        let scheduler = Scheduler::new(commands.clone());
+        let scheduler = Scheduler::new(commands.clone(), create_temp_state_path());
 
         assert_eq!(scheduler.commands.len(), 2);
         assert!(scheduler.last_execution_time.is_none());
@@ -337,10 +369,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_schedule_next_run() {
-        let mut scheduler = Scheduler::new(vec![]);
+        let mut scheduler = Scheduler::new(vec![], create_temp_state_path());
         let command = create_test_command("test", 1.0);
 
-        scheduler.schedule_next_run(command.clone());
+        let _next_run = scheduler.schedule_next_run(command.clone());
         assert_eq!(scheduler.commands.len(), 1);
 
         let scheduled = scheduler.commands.peek().unwrap();
@@ -350,7 +382,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_ordering() {
-        let mut scheduler = Scheduler::new(vec![]);
+        let mut scheduler = Scheduler::new(vec![], create_temp_state_path());
         let command1 = create_test_command("test1", 1.0);
         let command2 = create_test_command("test2", 2.0);
 
@@ -371,7 +403,7 @@ mod tests {
         ];
         commands[1].enabled = false;
 
-        let scheduler = Scheduler::new(commands);
+        let scheduler = Scheduler::new(commands, create_temp_state_path());
         assert_eq!(scheduler.commands.len(), 1);
         assert_eq!(scheduler.commands.peek().unwrap().command.name, "enabled");
     }
@@ -384,7 +416,7 @@ mod tests {
         ];
         commands[1].immediate = true;
 
-        let scheduler = Scheduler::new(commands);
+        let scheduler = Scheduler::new(commands, create_temp_state_path());
         assert_eq!(scheduler.commands.len(), 2);
     }
 }

@@ -68,6 +68,9 @@ cargo install --path .
 # Run with custom config file
 zephyr --config /path/to/config.toml
 
+# Run with custom state file
+zephyr --state-path /path/to/state.db
+
 # Service management
 zephyr --install-service    # Install as system service
 zephyr --uninstall-service  # Remove system service
@@ -81,32 +84,11 @@ zephyr --help
 #### Options
 
 - `-c, --config <PATH>`: Path to configuration file (default: config/scheduler.toml)
+- `-s, --state-path <PATH>`: Path to state database file (default: ~/.local/state/zephyr/state.db)
 - `-i, --install-service`: Install Zephyr as a system service
 - `-u, --uninstall-service`: Remove Zephyr service
 - `-S, --start-service`: Start the Zephyr service
 - `-X, --stop-service`: Stop the Zephyr service
-
-### Service Management
-
-#### Linux (systemd)
-
-```bash
-# Check service status
-systemctl status zephyr.service
-
-# View logs
-journalctl -u zephyr.service
-```
-
-#### macOS (launchd)
-
-```bash
-# Check service status
-launchctl list | grep zephyr
-
-# View logs
-tail -f ~/Library/Logs/zephyr.log
-```
 
 ### Example Usage
 

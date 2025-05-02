@@ -6,11 +6,12 @@ use tracing_subscriber::FmtSubscriber;
 mod config;
 mod core;
 mod service;
+mod state;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    #[arg(short, long, default_value = "scheduler.toml")]
+    #[arg(short, long, default_value = "config/scheduler.toml")]
     config: PathBuf,
 
     #[arg(short = 'i', long)]
@@ -24,6 +25,9 @@ struct Args {
 
     #[arg(short = 'X', long)]
     stop_service: bool,
+
+    #[arg(short = 's', long)]
+    state_path: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -40,6 +44,14 @@ async fn main() -> anyhow::Result<()> {
         .with_thread_names(true)
         .pretty()
         .init();
+
+    let state_path = args.state_path.unwrap_or_else(|| {
+        let mut path = dirs::home_dir().expect("Could not find home directory");
+        path.push(".local/state/zephyr");
+        std::fs::create_dir_all(&path).expect("Failed to create state directory");
+        path.push("state.db");
+        path
+    });
 
     info!("Loading configuration from {:?}", args.config);
     let config = match config::Config::load(&args.config) {
@@ -84,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
         "Initializing scheduler with {} commands",
         config.commands.len()
     );
-    let mut scheduler = core::scheduler::Scheduler::new(config.commands);
+    let mut scheduler = core::scheduler::Scheduler::new(config.commands, state_path);
 
     info!("Starting Zephyr task scheduler");
 
