@@ -31,6 +31,9 @@ struct Args {
 
     #[arg(short = 'r', long)]
     reset_state: bool,
+
+    #[arg(short = 'm', long, default_value = "10")]
+    max_immediate_executions: usize,
 }
 
 #[tokio::main]
@@ -107,7 +110,11 @@ async fn main() -> anyhow::Result<()> {
         "Initializing scheduler with {} commands",
         config.commands.len()
     );
-    let mut scheduler = core::scheduler::Scheduler::new(config.commands, state_path);
+    let mut scheduler = core::scheduler::Scheduler::new_with_config(
+        config.commands,
+        state_path,
+        args.max_immediate_executions,
+    );
 
     info!("Starting Zephyr task scheduler");
 

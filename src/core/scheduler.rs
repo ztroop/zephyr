@@ -53,6 +53,7 @@ pub struct Scheduler {
     last_execution_time: Option<DateTime<Utc>>,
     last_wake_time: Option<DateTime<Utc>>,
     state_manager: StateManager,
+    max_immediate_executions: usize,
 }
 
 impl Scheduler {
@@ -66,6 +67,14 @@ impl Scheduler {
     ///
     /// * `commands` - A vector of command configurations to be scheduled
     pub fn new(commands: Vec<CommandConfig>, state_path: PathBuf) -> Self {
+        Self::new_with_config(commands, state_path, 10)
+    }
+
+    pub fn new_with_config(
+        commands: Vec<CommandConfig>,
+        state_path: PathBuf,
+        max_immediate_executions: usize,
+    ) -> Self {
         let state_path_for_manager = state_path.clone();
 
         let state_manager =
@@ -84,6 +93,7 @@ impl Scheduler {
             last_execution_time: None,
             last_wake_time: Some(Utc::now()),
             state_manager,
+            max_immediate_executions,
         };
 
         info!("Scheduling {} commands", commands.len());
@@ -209,10 +219,9 @@ impl Scheduler {
                         missed_count
                     );
 
-                    let max_immediate_executions = 10; // Configurable limit
                     let (immediate_executions, reschedule_rest) =
-                        if missed_commands.len() > max_immediate_executions {
-                            missed_commands.split_at(max_immediate_executions)
+                        if missed_commands.len() > self.max_immediate_executions {
+                            missed_commands.split_at(self.max_immediate_executions)
                         } else {
                             (missed_commands.as_slice(), &[][..])
                         };
