@@ -2,52 +2,24 @@
 
 [![Build](https://github.com/ztroop/zephyr/actions/workflows/build.yml/badge.svg)](https://github.com/ztroop/zephyr/actions/workflows/build.yml)
 
-Zephyr is a modern task scheduler for Unix-like systems (Linux and macOS) that runs as a background service. It tracks when commands last ran and executes them based on their specific time intervals, handling computer sleep periods gracefully.
+Zephyr is a modern, lightweight task scheduler for Unix-like systems that runs as a background service. It combines the flexibility of CRON with the simplicity of interval-based scheduling, while handling system sleep and restarts gracefully. Perfect for automation tasks, backups, and periodic maintenance jobs.
 
 ## Features
 
-- **Dynamic Scheduling**: Commands can be scheduled with configurable intervals
-- **Immediate Execution**: Commands can be configured to run immediately on startup
-- **Sleep Detection**: Automatically detects system sleep and handles missed commands
-- **Persistent State**: Command execution history and schedules are saved between restarts
+- **Flexible Scheduling**: Supports both interval-based and CRON scheduling
+- **Immediate Execution**: Run commands immediately on startup
+- **Sleep Handling**: Automatically detects and recovers from system sleep
+- **State Persistence**: Saves command history and schedules between restarts
 - **Command Management**:
-  - Configurable working directories and environment variables
+  - Working directory and environment variable support
   - Command timeout handling
-  - Minimum interval enforcement between executions
-- **Service Integration**: Can be installed as a system service
-- Cross-platform support (Linux and macOS)
-- TOML-based configuration
-- Service installation for both systemd and launchd
-- Command execution with environment variables and working directories
-- Timeout handling for long-running commands
-- Detailed logging
+  - Minimum interval enforcement
+- **Service Integration**: Install as a system service (systemd/launchd)
+- **Cross-Platform**: Works on Linux and macOS
+- **TOML Configuration**: Simple, readable configuration format
+- **Detailed Logging**: Comprehensive execution and error logging
 
 ## Configuration
-
-Configuration is done via a TOML file. Here's an example:
-
-```toml
-[[commands]]
-name = "backup"
-command = "backup.sh"
-interval_minutes = 60.0
-max_runtime_minutes = 30
-enabled = true
-immediate = true  # Run immediately on startup
-working_dir = "/backups"
-environment = [
-    ["BACKUP_DIR", "/data/backups"],
-    ["COMPRESSION", "gzip"]
-]
-
-[[commands]]
-name = "cleanup"
-command = "cleanup.sh"
-interval_minutes = 1440.0  # 24 hours
-enabled = true
-```
-
-### Command Configuration Options
 
 - `name`: Unique identifier for the command
 - `command`: The command to execute
@@ -87,7 +59,7 @@ enabled = true
 ## Installation
 
 ```sh
-git clone git@github.com:ztroop/dead-ringer.git && cd ./dead-ringer
+git clone git@github.com:ztroop/zephyr.git && cd ./zephyr
 cargo install --path .
 ```
 
