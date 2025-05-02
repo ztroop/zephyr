@@ -47,7 +47,7 @@ working_dir = "/backups"
 environment = [
     ["BACKUP_DIR", "/data/backups"],
     ["COMPRESSION", "gzip"],
-    ["PATH", "$PATH"]        # Reference to existing environment variable
+    ["PATH", "$PATH"]
 ]
 
 [[commands]]
@@ -77,10 +77,10 @@ zephyr --state-path /path/to/state.db
 zephyr --reset-state
 
 # Service management
-zephyr --install-service    # Install as system service
-zephyr --uninstall-service  # Remove system service
-zephyr --start-service      # Start the service
-zephyr --stop-service       # Stop the service
+zephyr --install-service
+zephyr --uninstall-service
+zephyr --start-service
+zephyr --stop-service
 
 # Show help
 zephyr --help
