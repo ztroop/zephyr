@@ -50,11 +50,37 @@ enabled = true
 - `name`: Unique identifier for the command
 - `command`: The command to execute
 - `interval_minutes`: How often to run the command (in minutes)
+- `cron`: CRON expression for scheduling (e.g., "0 0 \* \* \*" for daily at midnight)
 - `max_runtime_minutes`: Optional timeout for command execution
 - `enabled`: Whether the command is active
 - `immediate`: Whether to run the command immediately on startup
 - `working_dir`: Optional working directory for the command
 - `environment`: Optional environment variables for the command
+
+Note: You must specify either `interval_minutes` or `cron`, but not both.
+
+Here's an example configuration using both interval and CRON scheduling:
+
+```toml
+[[commands]]
+name = "backup"
+command = "backup.sh"
+interval_minutes = 60.0
+max_runtime_minutes = 30
+enabled = true
+immediate = true
+working_dir = "/backups"
+environment = [
+    ["BACKUP_DIR", "/data/backups"],
+    ["COMPRESSION", "gzip"]
+]
+
+[[commands]]
+name = "cleanup"
+command = "cleanup.sh"
+cron = "0 0 * * *"  # Run daily at midnight
+enabled = true
+```
 
 ## Installation
 

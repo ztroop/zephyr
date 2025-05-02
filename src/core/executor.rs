@@ -68,7 +68,8 @@ mod tests {
         CommandConfig {
             name: "test".to_string(),
             command: command.to_string(),
-            interval_minutes: 1.0,
+            interval_minutes: Some(1.0),
+            cron: None,
             max_runtime_minutes: Some(5),
             enabled: true,
             working_dir: None,
@@ -98,7 +99,8 @@ mod tests {
         let command = CommandConfig {
             name: "test".to_string(),
             command: "pwd".to_string(),
-            interval_minutes: 1.0,
+            interval_minutes: Some(1.0),
+            cron: None,
             max_runtime_minutes: Some(5),
             enabled: true,
             working_dir: Some(temp_dir.path().to_path_buf()),
@@ -124,7 +126,8 @@ mod tests {
         let command = CommandConfig {
             name: "test".to_string(),
             command: "echo $TEST_VAR".to_string(),
-            interval_minutes: 1.0,
+            interval_minutes: Some(1.0),
+            cron: None,
             max_runtime_minutes: Some(5),
             enabled: true,
             working_dir: None,

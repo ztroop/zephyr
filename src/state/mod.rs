@@ -66,6 +66,17 @@ impl StateManager {
         last_execution: Option<DateTime<Utc>>,
         next_scheduled: DateTime<Utc>,
     ) -> Result<()> {
+        let (schedule_type, schedule_data) = if let Some(interval) = command.interval_minutes {
+            ("interval", interval.to_string())
+        } else if let Some(cron) = &command.cron {
+            ("cron", cron.clone())
+        } else {
+            return Err(anyhow::anyhow!(
+                "Command '{}' has no schedule type",
+                command.name
+            ));
+        };
+
         self.conn.execute(
             "INSERT OR REPLACE INTO commands
             (name, last_execution, next_scheduled, schedule_type, schedule_data)
@@ -74,8 +85,8 @@ impl StateManager {
                 command.name,
                 last_execution.map(|dt| dt.to_rfc3339()),
                 next_scheduled.to_rfc3339(),
-                "interval", // For now, we only support interval-based scheduling
-                command.interval_minutes.to_string(),
+                schedule_type,
+                schedule_data,
             ],
         )?;
         Ok(())
@@ -125,7 +136,8 @@ mod tests {
         CommandConfig {
             name: name.to_string(),
             command: "echo test".to_string(),
-            interval_minutes: interval,
+            interval_minutes: Some(interval),
+            cron: None,
             max_runtime_minutes: Some(5),
             enabled: true,
             working_dir: None,

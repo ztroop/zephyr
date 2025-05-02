@@ -2,9 +2,11 @@ use crate::config::CommandConfig;
 use crate::core::executor::{CommandExecutor, DefaultExecutor};
 use crate::state::StateManager;
 use chrono::{DateTime, Duration, Utc};
+use cron::Schedule;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::time::Duration as StdDuration;
 use tokio::time::{sleep, timeout};
 use tracing::{error, info, warn};
@@ -88,6 +90,7 @@ impl Scheduler {
         for command in commands {
             if command.enabled {
                 info!("Scheduling command: {}", command.name);
+                command.validate().expect("Invalid command configuration");
                 let next_run = if let Some(state) = state_map.remove(&command.name) {
                     info!("Found existing state for command '{}'", command.name);
                     state.next_scheduled
@@ -102,7 +105,7 @@ impl Scheduler {
                             temp_scheduler.execute_command(command_clone).await;
                         });
                     }
-                    Utc::now() + Duration::minutes(command.interval_minutes as i64)
+                    Self::calculate_next_run(&command)
                 };
 
                 scheduler
@@ -112,6 +115,49 @@ impl Scheduler {
         }
 
         scheduler
+    }
+
+    /// Calculates the next run time for a command based on its schedule type
+    fn calculate_next_run(command: &CommandConfig) -> DateTime<Utc> {
+        let now = Utc::now();
+        if let Some(interval) = command.interval_minutes {
+            now + Duration::minutes(interval as i64)
+        } else if let Some(cron) = &command.cron {
+            let schedule = Schedule::from_str(cron).expect("Invalid cron expression");
+            schedule
+                .upcoming(Utc)
+                .next()
+                .expect("Failed to calculate next cron run")
+        } else {
+            panic!("Command has no schedule type");
+        }
+    }
+
+    /// Schedules the next run of a command based on its schedule type
+    fn schedule_next_run(&mut self, command: CommandConfig) -> DateTime<Utc> {
+        let next_run = Self::calculate_next_run(&command);
+
+        let interval_display = if let Some(interval) = command.interval_minutes {
+            if interval < 1.0 {
+                format!("{:.1} seconds", interval * 60.0)
+            } else if interval < 60.0 {
+                format!("{:.1} minutes", interval)
+            } else {
+                format!("{:.1} hours", interval / 60.0)
+            }
+        } else if let Some(cron) = &command.cron {
+            format!("cron: {}", cron)
+        } else {
+            "unknown".to_string()
+        };
+
+        info!(
+            "Command '{}' next scheduled for {} (in {})",
+            command.name, next_run, interval_display
+        );
+
+        self.commands.push(ScheduledCommand { command, next_run });
+        next_run
     }
 
     /// Detects and handles system sleep events
@@ -268,32 +314,6 @@ impl Scheduler {
         }
     }
 
-    /// Schedules the next run of a command based on its interval
-    fn schedule_next_run(&mut self, command: CommandConfig) -> DateTime<Utc> {
-        let now = Utc::now();
-        let interval_seconds = std::cmp::max(
-            (command.interval_minutes * 60.0) as i64,
-            self.min_interval_seconds as i64,
-        );
-        let next_run = now + Duration::seconds(interval_seconds);
-
-        let interval_display = if interval_seconds < 60 {
-            format!("{} seconds", interval_seconds)
-        } else if interval_seconds < 3600 {
-            format!("{:.1} minutes", interval_seconds as f64 / 60.0)
-        } else {
-            format!("{:.1} hours", interval_seconds as f64 / 3600.0)
-        };
-
-        info!(
-            "Command '{}' next scheduled for {} (in {})",
-            command.name, next_run, interval_display
-        );
-
-        self.commands.push(ScheduledCommand { command, next_run });
-        next_run
-    }
-
     /// Executes a command and handles its output
     async fn execute_command(&mut self, command: CommandConfig) {
         let execution_start = Utc::now();
@@ -341,7 +361,22 @@ mod tests {
         CommandConfig {
             name: name.to_string(),
             command: "echo test".to_string(),
-            interval_minutes,
+            interval_minutes: Some(interval_minutes),
+            cron: None,
+            max_runtime_minutes: Some(5),
+            enabled: true,
+            working_dir: None,
+            environment: None,
+            immediate: false,
+        }
+    }
+
+    fn create_test_cron_command(name: &str, cron: &str) -> CommandConfig {
+        CommandConfig {
+            name: name.to_string(),
+            command: "echo test".to_string(),
+            interval_minutes: None,
+            cron: Some(cron.to_string()),
             max_runtime_minutes: Some(5),
             enabled: true,
             working_dir: None,
@@ -368,6 +403,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_cron_scheduler_initialization() {
+        let commands = vec![
+            create_test_cron_command("test1", "0 0 * * * *"), // Every hour
+            create_test_cron_command("test2", "0 0 0 * * *"), // Daily at midnight
+        ];
+        let scheduler = Scheduler::new(commands.clone(), create_temp_state_path());
+
+        assert_eq!(scheduler.commands.len(), 2);
+        assert!(scheduler.last_execution_time.is_none());
+    }
+
+    #[tokio::test]
     async fn test_schedule_next_run() {
         let mut scheduler = Scheduler::new(vec![], create_temp_state_path());
         let command = create_test_command("test", 1.0);
@@ -381,10 +428,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_cron_schedule_next_run() {
+        let mut scheduler = Scheduler::new(vec![], create_temp_state_path());
+        let command = create_test_cron_command("test", "0 0 * * * *"); // Every hour
+
+        let _next_run = scheduler.schedule_next_run(command.clone());
+        assert_eq!(scheduler.commands.len(), 1);
+
+        let scheduled = scheduler.commands.peek().unwrap();
+        assert_eq!(scheduled.command.name, "test");
+        assert!(scheduled.next_run > Utc::now());
+
+        let time_str = scheduled.next_run.format("%H:%M:%S").to_string();
+        assert_eq!(time_str.split(':').nth(1).unwrap(), "00");
+        assert_eq!(time_str.split(':').nth(2).unwrap(), "00");
+    }
+
+    #[tokio::test]
     async fn test_command_ordering() {
         let mut scheduler = Scheduler::new(vec![], create_temp_state_path());
         let command1 = create_test_command("test1", 1.0);
         let command2 = create_test_command("test2", 2.0);
+
+        scheduler.schedule_next_run(command1);
+        scheduler.schedule_next_run(command2);
+
+        let first = scheduler.commands.pop().unwrap();
+        let second = scheduler.commands.pop().unwrap();
+
+        assert!(first.next_run < second.next_run);
+    }
+
+    #[tokio::test]
+    async fn test_cron_command_ordering() {
+        let mut scheduler = Scheduler::new(vec![], create_temp_state_path());
+        let command1 = create_test_cron_command("test1", "0 0 * * * *"); // Every hour
+        let command2 = create_test_cron_command("test2", "0 0 0 * * *"); // Daily at midnight
+
+        scheduler.schedule_next_run(command1);
+        scheduler.schedule_next_run(command2);
+
+        let first = scheduler.commands.pop().unwrap();
+        let second = scheduler.commands.pop().unwrap();
+
+        assert!(first.next_run < second.next_run);
+    }
+
+    #[tokio::test]
+    async fn test_mixed_command_ordering() {
+        let mut scheduler = Scheduler::new(vec![], create_temp_state_path());
+        let command1 = create_test_command("test1", 1.0);
+        let command2 = create_test_cron_command("test2", "0 0 * * * *"); // Every hour
 
         scheduler.schedule_next_run(command1);
         scheduler.schedule_next_run(command2);
