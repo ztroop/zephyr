@@ -107,6 +107,13 @@ impl StateManager {
             .execute("DELETE FROM commands WHERE name = ?1", [name])?;
         Ok(())
     }
+
+    /// Resets the entire state database by dropping and recreating the table
+    pub fn reset_state(&self) -> Result<()> {
+        self.conn.execute("DROP TABLE IF EXISTS commands", [])?;
+        Self::init_db(&self.conn)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

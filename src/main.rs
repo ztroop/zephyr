@@ -28,6 +28,9 @@ struct Args {
 
     #[arg(short = 's', long)]
     state_path: Option<PathBuf>,
+
+    #[arg(short = 'r', long)]
+    reset_state: bool,
 }
 
 #[tokio::main]
@@ -52,6 +55,14 @@ async fn main() -> anyhow::Result<()> {
         path.push("state.db");
         path
     });
+
+    if args.reset_state {
+        info!("Resetting state database at {:?}", state_path);
+        let state_manager = state::StateManager::new(&state_path)?;
+        state_manager.reset_state()?;
+        info!("State database reset successfully");
+        return Ok(());
+    }
 
     info!("Loading configuration from {:?}", args.config);
     let config = match config::Config::load(&args.config) {

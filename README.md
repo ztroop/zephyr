@@ -7,6 +7,7 @@ Zephyr is a modern task scheduler for Unix-like systems (Linux and macOS) that r
 - **Dynamic Scheduling**: Commands can be scheduled with configurable intervals
 - **Immediate Execution**: Commands can be configured to run immediately on startup
 - **Sleep Detection**: Automatically detects system sleep and handles missed commands
+- **Persistent State**: Command execution history and schedules are saved between restarts
 - **Command Management**:
   - Configurable working directories and environment variables
   - Command timeout handling
@@ -71,6 +72,9 @@ zephyr --config /path/to/config.toml
 # Run with custom state file
 zephyr --state-path /path/to/state.db
 
+# Reset state database
+zephyr --reset-state
+
 # Service management
 zephyr --install-service    # Install as system service
 zephyr --uninstall-service  # Remove system service
@@ -85,6 +89,7 @@ zephyr --help
 
 - `-c, --config <PATH>`: Path to configuration file (default: config/scheduler.toml)
 - `-s, --state-path <PATH>`: Path to state database file (default: ~/.local/state/zephyr/state.db)
+- `-r, --reset-state`: Reset the state database, clearing all command history
 - `-i, --install-service`: Install Zephyr as a system service
 - `-u, --uninstall-service`: Remove Zephyr service
 - `-S, --start-service`: Start the Zephyr service
