@@ -1,5 +1,7 @@
 # zephyr
 
+[![Build](https://github.com/ztroop/zephyr/actions/workflows/build.yml/badge.svg)](https://github.com/ztroop/zephyr/actions/workflows/build.yml)
+
 Zephyr is a modern task scheduler for Unix-like systems (Linux and macOS) that runs as a background service. It tracks when commands last ran and executes them based on their specific time intervals, handling computer sleep periods gracefully.
 
 ## Features
