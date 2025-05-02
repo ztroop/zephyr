@@ -29,7 +29,7 @@ Zephyr is a modern, lightweight task scheduler for Unix-like systems that runs a
 - `enabled`: Whether the command is active
 - `immediate`: Whether to run the command immediately on startup
 - `working_dir`: Optional working directory for the command
-- `environment`: Optional environment variables for the command
+- `environment`: Optional environment variables for the command. Values can be either direct strings or references to existing environment variables using `$VARIABLE_NAME` syntax.
 
 Note: You must specify either `interval_minutes` or `cron`, but not both.
 
@@ -46,7 +46,8 @@ immediate = true
 working_dir = "/backups"
 environment = [
     ["BACKUP_DIR", "/data/backups"],
-    ["COMPRESSION", "gzip"]
+    ["COMPRESSION", "gzip"],
+    ["PATH", "$PATH"]        # Reference to existing environment variable
 ]
 
 [[commands]]

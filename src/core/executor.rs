@@ -46,7 +46,13 @@ impl CommandExecutor for DefaultExecutor {
 
         if let Some(env) = &command.environment {
             for (key, value) in env {
-                cmd.env(key, value);
+                let expanded_value = if value.starts_with("$") {
+                    let var_name = value.trim_start_matches("$");
+                    std::env::var(var_name).unwrap_or_else(|_| value.clone())
+                } else {
+                    value.clone()
+                };
+                cmd.env(key, expanded_value);
             }
         }
 
