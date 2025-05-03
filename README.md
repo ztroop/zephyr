@@ -88,7 +88,7 @@ zephyr --help
 
 #### Options
 
-- `-c, --config <PATH>`: Path to configuration file (default: config/scheduler.toml)
+- `-c, --config <PATH>`: Path to configuration file (default: ~/.config/zephyr/scheduler.toml)
 - `-s, --state-path <PATH>`: Path to state database file (default: ~/.local/state/zephyr/state.db)
 - `-r, --reset-state`: Reset the state database, clearing all command history
 - `-i, --install-service`: Install Zephyr as a system service
@@ -102,7 +102,7 @@ zephyr --help
 
    ```bash
    mkdir -p ~/.config/zephyr
-   cp config/scheduler.toml ~/.config/zephyr/
+   touch ~/.config/zephyr/scheduler.toml
    ```
 
 2. Edit the configuration to add your commands:
