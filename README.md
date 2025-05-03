@@ -1,4 +1,4 @@
-# zephyr
+# zephyr 💨
 
 [![Build](https://github.com/ztroop/zephyr/actions/workflows/build.yml/badge.svg)](https://github.com/ztroop/zephyr/actions/workflows/build.yml)
 
