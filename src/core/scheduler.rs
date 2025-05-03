@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::config::CommandConfig;
 use crate::core::executor::{CommandExecutor, DefaultExecutor};
 use crate::state::StateManager;
@@ -105,16 +107,6 @@ impl Scheduler {
                     info!("Found existing state for command '{}'", command.name);
                     state.next_scheduled
                 } else {
-                    if command.immediate {
-                        info!("Command '{}' will run immediately", command.name);
-                        let state_path_clone = state_path.clone();
-                        let command_clone = command.clone();
-                        tokio::spawn(async move {
-                            let mut temp_scheduler =
-                                Scheduler::new(vec![command_clone.clone()], state_path_clone);
-                            temp_scheduler.execute_command(command_clone).await;
-                        });
-                    }
                     Self::calculate_next_run(&command)
                 };
 
@@ -245,13 +237,35 @@ impl Scheduler {
             }
         }
 
-        // Update the last wake time
         self.last_wake_time = Some(now);
     }
 
     /// Runs the scheduler loop, executing commands at their scheduled times
     pub async fn run(&mut self) {
         info!("Starting scheduler loop");
+
+        let mut immediate_commands = Vec::new();
+        let mut other_commands = Vec::new();
+
+        while let Some(scheduled) = self.commands.pop() {
+            if scheduled.command.immediate {
+                immediate_commands.push(scheduled);
+            } else {
+                other_commands.push(scheduled);
+            }
+        }
+
+        let immediate_count =
+            std::cmp::min(immediate_commands.len(), self.max_immediate_executions);
+        for scheduled in immediate_commands.into_iter().take(immediate_count) {
+            info!("Executing immediate command: {}", scheduled.command.name);
+            self.execute_command(scheduled.command).await;
+        }
+
+        for scheduled in other_commands {
+            self.commands.push(scheduled);
+        }
+
         loop {
             self.handle_sleep_resume().await;
 

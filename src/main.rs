@@ -11,7 +11,7 @@ mod state;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    #[arg(short, long, default_value = "config/scheduler.toml")]
+    #[arg(short, long, default_value = "~/.config/zephyr/scheduler.toml")]
     config: PathBuf,
 
     #[arg(short = 'i', long)]
@@ -44,11 +44,11 @@ async fn main() -> anyhow::Result<()> {
     FmtSubscriber::builder()
         .with_max_level(Level::INFO)
         .with_target(false)
-        .with_thread_ids(true)
-        .with_file(true)
-        .with_line_number(true)
-        .with_thread_names(true)
-        .pretty()
+        .with_thread_ids(false)
+        .with_file(false)
+        .with_line_number(false)
+        .with_thread_names(false)
+        .with_ansi(true)
         .init();
 
     let state_path = args.state_path.unwrap_or_else(|| {
@@ -77,7 +77,29 @@ async fn main() -> anyhow::Result<()> {
             c
         }
         Err(e) => {
-            error!("Failed to load configuration: {}", e);
+            if !args.config.exists() {
+                error!(
+                    "Configuration file not found at {:?}\n\n\
+                    To get started with Zephyr:\n\
+                    1. Create a configuration file at {:?}\n\
+                    2. Add your scheduled commands to the file\n\
+                    3. Run Zephyr again\n\n\
+                    Example configuration:\n\
+                    ```toml\n\
+                    [[commands]]\n\
+                    name = \"backup\"\n\
+                    command = \"backup.sh\"\n\
+                    interval_minutes = 60.0\n\
+                    max_runtime_minutes = 30\n\
+                    enabled = true\n\
+                    immediate = true\n\
+                    ```\n\n\
+                    For more examples, see the README at https://github.com/ztroop/zephyr",
+                    args.config, args.config
+                );
+            } else {
+                error!("Failed to load configuration: {}", e);
+            }
             return Err(e);
         }
     };
