@@ -31,9 +31,6 @@ struct Args {
 
     #[arg(short = 'r', long)]
     reset_state: bool,
-
-    #[arg(short = 'm', long, default_value = "10")]
-    max_immediate_executions: usize,
 }
 
 #[tokio::main]
@@ -50,22 +47,6 @@ async fn main() -> anyhow::Result<()> {
         .with_thread_names(false)
         .with_ansi(true)
         .init();
-
-    let state_path = args.state_path.unwrap_or_else(|| {
-        let mut path = dirs::home_dir().expect("Could not find home directory");
-        path.push(".local/state/zephyr");
-        std::fs::create_dir_all(&path).expect("Failed to create state directory");
-        path.push("state.db");
-        path
-    });
-
-    if args.reset_state {
-        info!("Resetting state database at {:?}", state_path);
-        let state_manager = state::StateManager::new(&state_path)?;
-        state_manager.reset_state()?;
-        info!("State database reset successfully");
-        return Ok(());
-    }
 
     info!("Loading configuration from {:?}", args.config);
     let config = match config::Config::load(&args.config) {
@@ -86,6 +67,11 @@ async fn main() -> anyhow::Result<()> {
                     3. Run Zephyr again\n\n\
                     Example configuration:\n\
                     ```toml\n\
+                    [general]\n\
+                    log_level = \"info\"\n\
+                    min_interval_seconds = 30\n\
+                    state_path = \"~/.local/state/zephyr/state.db\"\n\
+                    max_immediate_executions = 10\n\n\
                     [[commands]]\n\
                     name = \"backup\"\n\
                     command = \"backup.sh\"\n\
@@ -99,6 +85,11 @@ async fn main() -> anyhow::Result<()> {
                 );
             } else {
                 error!("Failed to load configuration: {}", e);
+                if let Some(io_error) = e.downcast_ref::<std::io::Error>() {
+                    error!("IO error: {}", io_error);
+                } else {
+                    error!("Configuration error: {}", e);
+                }
             }
             return Err(e);
         }
@@ -128,14 +119,27 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let state_path = args.state_path.unwrap_or(config.general.state_path);
+
+    if args.reset_state {
+        info!("Resetting state database at {:?}", state_path);
+        let state_manager = state::StateManager::new(&state_path)?;
+        state_manager.reset_state()?;
+        info!("State database reset successfully");
+        return Ok(());
+    }
+
     info!(
-        "Initializing scheduler with {} commands",
-        config.commands.len()
+        "Initializing scheduler with {} commands (min_interval_seconds: {}, max_immediate_executions: {})",
+        config.commands.len(),
+        config.general.min_interval_seconds,
+        config.general.max_immediate_executions
     );
     let mut scheduler = core::scheduler::Scheduler::new_with_config(
         config.commands,
         state_path,
-        args.max_immediate_executions,
+        config.general.max_immediate_executions,
+        config.general.min_interval_seconds,
     );
 
     info!("Starting Zephyr task scheduler");
