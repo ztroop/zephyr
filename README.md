@@ -53,7 +53,7 @@ environment = [
 [[commands]]
 name = "cleanup"
 command = "cleanup.sh"
-cron = "0 0 * * *"  # Run daily at midnight
+cron = "0 0 * * * *"  # Run daily at midnight
 enabled = true
 ```
 
