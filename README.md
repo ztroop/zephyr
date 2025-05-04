@@ -21,6 +21,15 @@ Zephyr is a modern, lightweight task scheduler for Unix-like systems that runs a
 
 ## Configuration
 
+### Global Options
+
+- `log_level`: Logging level (e.g., "info", "debug", "error")
+- `min_interval_seconds`: Minimum time between command executions (1-3600 seconds, default: 30)
+- `state_path`: Path to the state database file (default: ~/.local/state/zephyr/state.db)
+- `max_immediate_executions`: Maximum number of immediate commands to execute on startup (1-100, default: 10)
+
+### Command Options
+
 - `name`: Unique identifier for the command
 - `command`: The command to execute
 - `interval_minutes`: How often to run the command (in minutes)
@@ -36,6 +45,12 @@ Note: You must specify either `interval_minutes` or `cron`, but not both.
 Here's an example configuration using both interval and CRON scheduling:
 
 ```toml
+[general]
+log_level = "info"
+min_interval_seconds = 30
+state_path = "~/.local/state/zephyr/state.db"
+max_immediate_executions = 10
+
 [[commands]]
 name = "backup"
 command = "backup.sh"
