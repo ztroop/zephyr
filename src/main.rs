@@ -1,6 +1,7 @@
 use clap::Parser;
+use core::util::expand_tilde;
 use std::path::PathBuf;
-use tracing::{error, info, Level};
+use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 mod config;
@@ -26,7 +27,7 @@ struct Args {
     #[arg(short = 'X', long)]
     stop_service: bool,
 
-    #[arg(short = 's', long)]
+    #[arg(short = 's', long, default_value = "~/.local/state/zephyr/state.db")]
     state_path: Option<PathBuf>,
 
     #[arg(short = 'r', long)]
@@ -48,52 +49,28 @@ async fn main() -> anyhow::Result<()> {
         .with_ansi(true)
         .init();
 
-    info!("Loading configuration from {:?}", args.config);
-    let config = match config::Config::load(&args.config) {
-        Ok(c) => {
-            info!(
-                "Successfully loaded configuration with {} commands",
-                c.commands.len()
-            );
-            c
-        }
-        Err(e) => {
-            if !args.config.exists() {
-                error!(
-                    "Configuration file not found at {:?}\n\n\
-                    To get started with Zephyr:\n\
-                    1. Create a configuration file at {:?}\n\
-                    2. Add your scheduled commands to the file\n\
-                    3. Run Zephyr again\n\n\
-                    Example configuration:\n\
-                    ```toml\n\
-                    [general]\n\
-                    log_level = \"info\"\n\
-                    min_interval_seconds = 30\n\
-                    state_path = \"~/.local/state/zephyr/state.db\"\n\
-                    max_immediate_executions = 10\n\n\
-                    [[commands]]\n\
-                    name = \"backup\"\n\
-                    command = \"backup.sh\"\n\
-                    interval_minutes = 60.0\n\
-                    max_runtime_minutes = 30\n\
-                    enabled = true\n\
-                    immediate = true\n\
-                    ```\n\n\
-                    For more examples, see the README at https://github.com/ztroop/zephyr",
-                    args.config, args.config
-                );
-            } else {
-                error!("Failed to load configuration: {}", e);
-                if let Some(io_error) = e.downcast_ref::<std::io::Error>() {
-                    error!("IO error: {}", io_error);
-                } else {
-                    error!("Configuration error: {}", e);
+    if args.reset_state {
+        let state_path = if let Some(ref cli_path) = args.state_path {
+            cli_path.clone()
+        } else if args.config.exists() {
+            match config::Config::load(&args.config) {
+                Ok(config) => config.general.state_path,
+                Err(e) => {
+                    error!("Failed to load config for state path: {}", e);
+                    return Err(e);
                 }
             }
-            return Err(e);
-        }
-    };
+        } else {
+            PathBuf::from("~/.local/state/zephyr/state.db")
+        };
+
+        info!("Resetting state database at {:?}", state_path);
+        let state_path = expand_tilde(&state_path);
+        let state_manager = state::StateManager::new(&state_path)?;
+        state_manager.reset_state()?;
+        info!("State database reset successfully");
+        return Ok(());
+    }
 
     if args.install_service {
         info!("Installing service...");
@@ -119,15 +96,32 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let state_path = args.state_path.unwrap_or(config.general.state_path);
+    info!("Loading configuration from {:?}", args.config);
+    let config = match config::Config::load(&args.config) {
+        Ok(c) => {
+            info!(
+                "Successfully loaded configuration with {} commands",
+                c.commands.len()
+            );
+            c
+        }
+        Err(e) => {
+            if !args.config.exists() {
+                warn!("Configuration file not found at {:?}", args.config);
+            } else {
+                error!("Failed to load configuration: {}", e);
+                if let Some(io_error) = e.downcast_ref::<std::io::Error>() {
+                    error!("IO error: {}", io_error);
+                } else {
+                    error!("Configuration error: {}", e);
+                }
+            }
+            return Err(e);
+        }
+    };
 
-    if args.reset_state {
-        info!("Resetting state database at {:?}", state_path);
-        let state_manager = state::StateManager::new(&state_path)?;
-        state_manager.reset_state()?;
-        info!("State database reset successfully");
-        return Ok(());
-    }
+    let state_path = args.state_path.unwrap_or(config.general.state_path);
+    let state_path = expand_tilde(&state_path);
 
     info!(
         "Initializing scheduler with {} commands (min_interval_seconds: {}, max_immediate_executions: {})",
