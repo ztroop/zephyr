@@ -69,13 +69,14 @@ impl Scheduler {
     ///
     /// * `commands` - A vector of command configurations to be scheduled
     pub fn new(commands: Vec<CommandConfig>, state_path: PathBuf) -> Self {
-        Self::new_with_config(commands, state_path, 10)
+        Self::new_with_config(commands, state_path, 10, 30)
     }
 
     pub fn new_with_config(
         commands: Vec<CommandConfig>,
         state_path: PathBuf,
         max_immediate_executions: usize,
+        min_interval_seconds: u64,
     ) -> Self {
         let state_path_for_manager = state_path.clone();
 
@@ -91,7 +92,7 @@ impl Scheduler {
         let mut scheduler = Scheduler {
             commands: BinaryHeap::new(),
             executor: Box::new(DefaultExecutor),
-            min_interval_seconds: 30,
+            min_interval_seconds,
             last_execution_time: None,
             last_wake_time: Some(Utc::now()),
             state_manager,
