@@ -1,0 +1,33 @@
+# Example: Homebrew maintenance on macOS
+# Copy to ~/.config/zephyr/scheduler.toml and customize as needed
+#
+# Usage (from project root): zephyr --config examples/brew.toml
+
+[general]
+log_level = "info"
+state_path = "~/.local/state/zephyr/state.db"
+max_immediate_executions = 3
+
+# Update package lists and upgrade outdated packages (daily)
+[[commands]]
+name = "brew_update"
+command = "brew update && brew upgrade"
+interval_minutes = 1440.0
+max_runtime_minutes = 30
+enabled = true
+environment = [
+    ["PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"],
+    ["HOME", "~"]
+]
+
+# Remove old versions, clean cache, and uninstall unused deps (weekly)
+[[commands]]
+name = "brew_cleanup"
+command = "brew cleanup --prune=all && brew autoremove"
+interval_minutes = 10080.0
+max_runtime_minutes = 20
+enabled = true
+environment = [
+    ["PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"],
+    ["HOME", "~"]
+]

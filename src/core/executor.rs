@@ -1,7 +1,7 @@
-#![allow(dead_code)]
-
 use crate::config::CommandConfig;
+use crate::util::expand_tilde;
 use std::io;
+use std::path::Path;
 use tokio::process::Command;
 
 /// Represents the output of a command execution
@@ -38,17 +38,24 @@ pub struct DefaultExecutor;
 impl CommandExecutor for DefaultExecutor {
     async fn execute(&self, command: &CommandConfig) -> io::Result<CommandOutput> {
         let mut cmd = Command::new("sh");
+        cmd.kill_on_drop(true);
         cmd.arg("-c").arg(&command.command);
 
         if let Some(dir) = &command.working_dir {
-            cmd.current_dir(dir);
+            let expanded_dir = expand_tilde(dir);
+            cmd.current_dir(&expanded_dir);
         }
 
         if let Some(env) = &command.environment {
             for (key, value) in env {
-                let expanded_value = if value.starts_with("$") {
-                    let var_name = value.trim_start_matches("$");
+                let expanded_value = if value.starts_with("${") && value.ends_with('}') && value.len() > 3 {
+                    let var_name = &value[2..value.len() - 1];
                     std::env::var(var_name).unwrap_or_else(|_| value.clone())
+                } else if value.starts_with('$') {
+                    let var_name = value.trim_start_matches('$');
+                    std::env::var(var_name).unwrap_or_else(|_| value.clone())
+                } else if value.starts_with('~') {
+                    expand_tilde(Path::new(value)).to_string_lossy().to_string()
                 } else {
                     value.clone()
                 };
@@ -143,6 +150,30 @@ mod tests {
 
         let output = executor.execute(&command).await.unwrap();
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "test_value");
+        assert_eq!(output.status, 0);
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_environment_braced_syntax() {
+        let executor = DefaultExecutor;
+        let home = std::env::var("HOME").expect("HOME must be set in test environment");
+        let command = CommandConfig {
+            name: "test".to_string(),
+            command: "echo $EXPANDED_HOME".to_string(),
+            interval_minutes: Some(1.0),
+            cron: None,
+            max_runtime_minutes: Some(5),
+            enabled: true,
+            working_dir: None,
+            environment: Some(vec![(
+                "EXPANDED_HOME".to_string(),
+                "${HOME}".to_string(),
+            )]),
+            immediate: false,
+        };
+
+        let output = executor.execute(&command).await.unwrap();
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), home);
         assert_eq!(output.status, 0);
     }
 

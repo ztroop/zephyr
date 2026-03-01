@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::config::CommandConfig;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -10,6 +8,7 @@ use std::path::Path;
 #[derive(Debug)]
 pub struct CommandState {
     pub name: String,
+    #[allow(dead_code)]
     pub last_execution: Option<DateTime<Utc>>,
     pub next_scheduled: DateTime<Utc>,
 }
@@ -22,6 +21,11 @@ pub struct StateManager {
 impl StateManager {
     /// Creates a new state manager, initializing the database if needed
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| anyhow::anyhow!("Failed to create state directory: {}", e))?;
+        }
         let conn = Connection::open(path)?;
         Self::init_db(&conn)?;
         Ok(Self { conn })
@@ -51,8 +55,17 @@ impl StateManager {
             .query_map([], |row| {
                 Ok(CommandState {
                     name: row.get(0)?,
-                    last_execution: row.get::<_, Option<String>>(1)?.map(|s| s.parse().unwrap()),
-                    next_scheduled: row.get::<_, String>(2)?.parse().unwrap(),
+                    last_execution: row
+                        .get::<_, Option<String>>(1)?
+                        .map(|s| {
+                            s.parse()
+                                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+                        })
+                        .transpose()?,
+                    next_scheduled: row
+                        .get::<_, String>(2)?
+                        .parse()
+                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -93,6 +106,7 @@ impl StateManager {
     }
 
     /// Gets the state for a specific command
+    #[allow(dead_code)]
     pub fn get_command_state(&self, name: &str) -> Result<Option<CommandState>> {
         self.conn
             .query_row(
@@ -103,8 +117,15 @@ impl StateManager {
                         name: row.get(0)?,
                         last_execution: row
                             .get::<_, Option<String>>(1)?
-                            .map(|s| s.parse().unwrap()),
-                        next_scheduled: row.get::<_, String>(2)?.parse().unwrap(),
+                            .map(|s| {
+                                s.parse()
+                                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+                            })
+                            .transpose()?,
+                        next_scheduled: row
+                            .get::<_, String>(2)?
+                            .parse()
+                            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
                     })
                 },
             )
@@ -113,6 +134,7 @@ impl StateManager {
     }
 
     /// Deletes the state for a specific command
+    #[allow(dead_code)]
     pub fn delete_command_state(&self, name: &str) -> Result<()> {
         self.conn
             .execute("DELETE FROM commands WHERE name = ?1", [name])?;
@@ -169,5 +191,31 @@ mod tests {
         assert!(state.get_command_state("test")?.is_none());
 
         Ok(())
+    }
+
+    #[test]
+    fn test_corrupted_datetime_returns_error() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let conn = rusqlite::Connection::open(temp_file.path()).unwrap();
+        conn.execute(
+            "CREATE TABLE commands (
+                name TEXT PRIMARY KEY,
+                last_execution TEXT,
+                next_scheduled TEXT NOT NULL,
+                schedule_type TEXT NOT NULL,
+                schedule_data TEXT NOT NULL
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO commands (name, last_execution, next_scheduled, schedule_type, schedule_data) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params!["bad_cmd", "not-a-date", "also-not-a-date", "interval", "5.0"],
+        )
+        .unwrap();
+
+        let state = StateManager::new(temp_file.path()).unwrap();
+        let result = state.load_command_states();
+        assert!(result.is_err());
     }
 }

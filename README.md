@@ -72,6 +72,13 @@ cron = "0 0 * * * *"  # Run daily at midnight
 enabled = true
 ```
 
+## Examples
+
+Example configurations are in the `examples/` folder:
+
+- **scheduler.toml** – General-purpose example with backups, maintenance, and health checks
+- **brew.toml** – Homebrew maintenance on macOS (daily updates, weekly cleanup)
+
 ## Installation
 
 ```sh
@@ -113,23 +120,25 @@ zephyr --help
 
 ### Example Usage
 
-1. Create a configuration file:
+1. Copy an example config and customize:
 
    ```bash
    mkdir -p ~/.config/zephyr
-   touch ~/.config/zephyr/scheduler.toml
-   ```
-
-2. Edit the configuration to add your commands:
-
-   ```bash
+   cp examples/scheduler.toml ~/.config/zephyr/scheduler.toml
+   # Or for Homebrew maintenance on macOS: cp examples/brew.toml ~/.config/zephyr/scheduler.toml
    nano ~/.config/zephyr/scheduler.toml
    ```
 
-3. Run Zephyr:
+2. Run Zephyr:
 
    ```bash
    zephyr --config ~/.config/zephyr/scheduler.toml
+   ```
+
+3. Or run directly with an example:
+
+   ```bash
+   zephyr --config examples/brew.toml
    ```
 
 4. Or install as a service:
