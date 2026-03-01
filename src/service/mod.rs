@@ -84,11 +84,12 @@ pub fn install_service() -> Result<()> {
         username, username
     );
 
-    let plist_path = format!(
-        "/Users/{}/Library/LaunchAgents/com.zephyr.scheduler.plist",
-        username
-    );
+    let plist_dir = format!("/Users/{}/Library/LaunchAgents", username);
+    let plist_path = format!("{}/com.zephyr.scheduler.plist", plist_dir);
+    let logs_dir = format!("/Users/{}/Library/Logs", username);
 
+    fs::create_dir_all(&plist_dir).context("Failed to create LaunchAgents directory")?;
+    fs::create_dir_all(&logs_dir).context("Failed to create Logs directory")?;
     fs::write(&plist_path, plist_content).context("Failed to write launchd plist file")?;
 
     check_status(
