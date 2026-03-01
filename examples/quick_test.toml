@@ -1,0 +1,19 @@
+# Quick test config - minimal setup for fast integration testing
+# Usage: zephyr --config examples/quick_test.toml
+#
+# Runs a simple echo command every 6 seconds. Use for manual testing or
+# as a fixture for integration tests.
+
+[general]
+log_level = "info"
+min_interval_seconds = 1
+state_path = "/tmp/zephyr_quick_test/state.db"
+max_immediate_executions = 3
+
+[[commands]]
+name = "quick_echo"
+command = "echo 'Zephyr quick test'"
+interval_minutes = 0.1
+max_runtime_minutes = 1
+enabled = true
+immediate = true

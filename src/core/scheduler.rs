@@ -1,8 +1,7 @@
-#![allow(dead_code)]
-
 use crate::config::CommandConfig;
 use crate::core::executor::{CommandExecutor, DefaultExecutor};
 use crate::state::StateManager;
+use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use cron::Schedule;
 use std::cmp::Ordering;
@@ -68,7 +67,8 @@ impl Scheduler {
     /// # Arguments
     ///
     /// * `commands` - A vector of command configurations to be scheduled
-    pub fn new(commands: Vec<CommandConfig>, state_path: PathBuf) -> Self {
+    #[allow(dead_code)]
+    pub fn new(commands: Vec<CommandConfig>, state_path: PathBuf) -> Result<Self> {
         Self::new_with_config(commands, state_path, 10, 30)
     }
 
@@ -77,13 +77,15 @@ impl Scheduler {
         state_path: PathBuf,
         max_immediate_executions: usize,
         min_interval_seconds: u64,
-    ) -> Self {
+    ) -> Result<Self> {
         let state_path_for_manager = state_path.clone();
 
-        let state_manager =
-            StateManager::new(state_path_for_manager).expect("Failed to initialize state manager");
+        let state_manager = StateManager::new(state_path_for_manager)?;
 
-        let existing_states = state_manager.load_command_states().unwrap_or_default();
+        let existing_states = state_manager.load_command_states().unwrap_or_else(|e| {
+            warn!("Failed to load command states (using empty): {}", e);
+            Vec::new()
+        });
         let mut state_map = existing_states
             .into_iter()
             .map(|state| (state.name.clone(), state))
@@ -103,12 +105,12 @@ impl Scheduler {
         for command in commands {
             if command.enabled {
                 info!("Scheduling command: {}", command.name);
-                command.validate().expect("Invalid command configuration");
+                command.validate()?;
                 let next_run = if let Some(state) = state_map.remove(&command.name) {
                     info!("Found existing state for command '{}'", command.name);
                     state.next_scheduled
                 } else {
-                    Self::calculate_next_run(&command)
+                    Self::calculate_next_run(&command)?
                 };
 
                 scheduler
@@ -117,28 +119,32 @@ impl Scheduler {
             }
         }
 
-        scheduler
+        Ok(scheduler)
     }
 
     /// Calculates the next run time for a command based on its schedule type
-    fn calculate_next_run(command: &CommandConfig) -> DateTime<Utc> {
+    fn calculate_next_run(command: &CommandConfig) -> Result<DateTime<Utc>> {
         let now = Utc::now();
         if let Some(interval) = command.interval_minutes {
-            now + Duration::minutes(interval as i64)
+            Ok(now + Duration::minutes(interval as i64))
         } else if let Some(cron) = &command.cron {
-            let schedule = Schedule::from_str(cron).expect("Invalid cron expression");
+            let schedule = Schedule::from_str(cron)
+                .map_err(|e| anyhow::anyhow!("Invalid cron expression: {}", e))?;
             schedule
                 .upcoming(Utc)
                 .next()
-                .expect("Failed to calculate next cron run")
+                .ok_or_else(|| anyhow::anyhow!("Failed to calculate next cron run"))
         } else {
-            panic!("Command has no schedule type");
+            Err(anyhow::anyhow!(
+                "Command '{}' has no schedule type",
+                command.name
+            ))
         }
     }
 
     /// Schedules the next run of a command based on its schedule type
-    fn schedule_next_run(&mut self, command: CommandConfig) -> DateTime<Utc> {
-        let next_run = Self::calculate_next_run(&command);
+    fn schedule_next_run(&mut self, command: CommandConfig) -> Result<DateTime<Utc>> {
+        let next_run = Self::calculate_next_run(&command)?;
 
         let interval_display = if let Some(interval) = command.interval_minutes {
             if interval < 1.0 {
@@ -160,7 +166,7 @@ impl Scheduler {
         );
 
         self.commands.push(ScheduledCommand { command, next_run });
-        next_run
+        Ok(next_run)
     }
 
     /// Detects and handles system sleep events
@@ -171,8 +177,8 @@ impl Scheduler {
     ///
     /// # Examples
     ///
-    /// ```
-    /// let mut scheduler = Scheduler::new(commands);
+    /// ```ignore
+    /// let mut scheduler = Scheduler::new_with_config(commands, state_path, 10, 30)?;
     /// scheduler.handle_sleep_resume().await;
     /// ```
     pub async fn handle_sleep_resume(&mut self) {
@@ -182,11 +188,10 @@ impl Scheduler {
             let time_since_last_wake = now.signed_duration_since(last_wake);
 
             let was_sleeping = time_since_last_wake.num_minutes() > 5
-                && (self.last_execution_time.is_none()
-                    || now
-                        .signed_duration_since(self.last_execution_time.unwrap())
-                        .num_minutes()
-                        > 5);
+                && (match self.last_execution_time {
+                    None => true,
+                    Some(last_exec) => now.signed_duration_since(last_exec).num_minutes() > 5,
+                });
 
             if was_sleeping {
                 info!(
@@ -232,7 +237,12 @@ impl Scheduler {
                             "Rescheduling missed command without execution: {} (was scheduled for {})",
                             scheduled.command.name, scheduled.next_run
                         );
-                        self.schedule_next_run(scheduled.command.clone());
+                        if let Err(e) = self.schedule_next_run(scheduled.command.clone()) {
+                            error!(
+                                "Failed to reschedule command '{}': {}",
+                                scheduled.command.name, e
+                            );
+                        }
                     }
                 }
             }
@@ -303,7 +313,10 @@ impl Scheduler {
                         info!("Executing command: {}", cmd_name);
                         self.last_execution_time = Some(Utc::now());
 
-                        let execution_timeout = StdDuration::from_secs(300);
+                        let execution_start = Utc::now();
+                        let execution_timeout = StdDuration::from_secs(
+                            (command_to_run.command.max_runtime_minutes.unwrap_or(5) as u64) * 60,
+                        );
                         match timeout(
                             execution_timeout,
                             self.execute_command(command_to_run.command.clone()),
@@ -318,7 +331,26 @@ impl Scheduler {
                                     "Command '{}' execution timed out after {:?}",
                                     cmd_name, execution_timeout
                                 );
-                                self.schedule_next_run(command_to_run.command);
+                                match self.schedule_next_run(command_to_run.command.clone()) {
+                                    Ok(next_run) => {
+                                        if let Err(e) = self.state_manager.save_command_state(
+                                            &command_to_run.command,
+                                            Some(execution_start),
+                                            next_run,
+                                        ) {
+                                            error!(
+                                                "Failed to save state for command '{}': {}",
+                                                cmd_name, e
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            "Failed to calculate next run for timed-out command '{}': {}",
+                                            cmd_name, e
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
@@ -344,7 +376,14 @@ impl Scheduler {
 
         match self.executor.execute(&command).await {
             Ok(output) => {
-                info!("Command '{}' completed successfully", command.name);
+                if output.status == 0 {
+                    info!("Command '{}' completed successfully", command.name);
+                } else {
+                    error!(
+                        "Command '{}' failed with exit status {}",
+                        command.name, output.status
+                    );
+                }
                 if !output.stdout.is_empty() {
                     info!("Output: {}", String::from_utf8_lossy(&output.stdout));
                 }
@@ -365,12 +404,21 @@ impl Scheduler {
         );
 
         // Save state after execution
-        let next_run = self.schedule_next_run(command.clone());
-        if let Err(e) =
-            self.state_manager
-                .save_command_state(&command, Some(execution_start), next_run)
-        {
-            error!("Failed to save state for command '{}': {}", command.name, e);
+        match self.schedule_next_run(command.clone()) {
+            Ok(next_run) => {
+                if let Err(e) =
+                    self.state_manager
+                        .save_command_state(&command, Some(execution_start), next_run)
+                {
+                    error!("Failed to save state for command '{}': {}", command.name, e);
+                }
+            }
+            Err(e) => {
+                error!(
+                    "Failed to calculate next run for command '{}': {}",
+                    command.name, e
+                );
+            }
         }
     }
 }
@@ -420,7 +468,7 @@ mod tests {
             create_test_command("test1", 1.0),
             create_test_command("test2", 2.0),
         ];
-        let scheduler = Scheduler::new(commands.clone(), create_temp_state_path());
+        let scheduler = Scheduler::new(commands.clone(), create_temp_state_path()).unwrap();
 
         assert_eq!(scheduler.commands.len(), 2);
         assert!(scheduler.last_execution_time.is_none());
@@ -432,7 +480,7 @@ mod tests {
             create_test_cron_command("test1", "0 0 * * * *"), // Every hour
             create_test_cron_command("test2", "0 0 0 * * *"), // Daily at midnight
         ];
-        let scheduler = Scheduler::new(commands.clone(), create_temp_state_path());
+        let scheduler = Scheduler::new(commands.clone(), create_temp_state_path()).unwrap();
 
         assert_eq!(scheduler.commands.len(), 2);
         assert!(scheduler.last_execution_time.is_none());
@@ -440,10 +488,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_schedule_next_run() {
-        let mut scheduler = Scheduler::new(vec![], create_temp_state_path());
+        let mut scheduler = Scheduler::new(vec![], create_temp_state_path()).unwrap();
         let command = create_test_command("test", 1.0);
 
-        let _next_run = scheduler.schedule_next_run(command.clone());
+        scheduler.schedule_next_run(command.clone()).unwrap();
         assert_eq!(scheduler.commands.len(), 1);
 
         let scheduled = scheduler.commands.peek().unwrap();
@@ -453,10 +501,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_cron_schedule_next_run() {
-        let mut scheduler = Scheduler::new(vec![], create_temp_state_path());
+        let mut scheduler = Scheduler::new(vec![], create_temp_state_path()).unwrap();
         let command = create_test_cron_command("test", "0 0 * * * *"); // Every hour
 
-        let _next_run = scheduler.schedule_next_run(command.clone());
+        scheduler.schedule_next_run(command.clone()).unwrap();
         assert_eq!(scheduler.commands.len(), 1);
 
         let scheduled = scheduler.commands.peek().unwrap();
@@ -470,12 +518,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_ordering() {
-        let mut scheduler = Scheduler::new(vec![], create_temp_state_path());
+        let mut scheduler = Scheduler::new(vec![], create_temp_state_path()).unwrap();
         let command1 = create_test_command("test1", 1.0);
         let command2 = create_test_command("test2", 2.0);
 
-        scheduler.schedule_next_run(command1);
-        scheduler.schedule_next_run(command2);
+        scheduler.schedule_next_run(command1).unwrap();
+        scheduler.schedule_next_run(command2).unwrap();
 
         let first = scheduler.commands.pop().unwrap();
         let second = scheduler.commands.pop().unwrap();
@@ -485,12 +533,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_cron_command_ordering() {
-        let mut scheduler = Scheduler::new(vec![], create_temp_state_path());
+        let mut scheduler = Scheduler::new(vec![], create_temp_state_path()).unwrap();
         let command1 = create_test_cron_command("test1", "0 0 * * * *"); // Every hour
         let command2 = create_test_cron_command("test2", "0 0 0 * * *"); // Daily at midnight
 
-        scheduler.schedule_next_run(command1);
-        scheduler.schedule_next_run(command2);
+        scheduler.schedule_next_run(command1).unwrap();
+        scheduler.schedule_next_run(command2).unwrap();
 
         let first = scheduler.commands.pop().unwrap();
         let second = scheduler.commands.pop().unwrap();
@@ -500,12 +548,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_mixed_command_ordering() {
-        let mut scheduler = Scheduler::new(vec![], create_temp_state_path());
+        let mut scheduler = Scheduler::new(vec![], create_temp_state_path()).unwrap();
         let command1 = create_test_command("test1", 1.0);
         let command2 = create_test_cron_command("test2", "0 0 * * * *"); // Every hour
 
-        scheduler.schedule_next_run(command1);
-        scheduler.schedule_next_run(command2);
+        scheduler.schedule_next_run(command1).unwrap();
+        scheduler.schedule_next_run(command2).unwrap();
 
         let first = scheduler.commands.pop().unwrap();
         let second = scheduler.commands.pop().unwrap();
@@ -521,7 +569,7 @@ mod tests {
         ];
         commands[1].enabled = false;
 
-        let scheduler = Scheduler::new(commands, create_temp_state_path());
+        let scheduler = Scheduler::new(commands, create_temp_state_path()).unwrap();
         assert_eq!(scheduler.commands.len(), 1);
         assert_eq!(scheduler.commands.peek().unwrap().command.name, "enabled");
     }
@@ -534,7 +582,7 @@ mod tests {
         ];
         commands[1].immediate = true;
 
-        let scheduler = Scheduler::new(commands, create_temp_state_path());
+        let scheduler = Scheduler::new(commands, create_temp_state_path()).unwrap();
         assert_eq!(scheduler.commands.len(), 2);
     }
 }
