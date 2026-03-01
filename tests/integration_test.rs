@@ -1,8 +1,8 @@
 //! Integration tests for Zephyr scheduler
 
-use zephyr::config::Config;
-use zephyr::core::scheduler::Scheduler;
-use zephyr::state::StateManager;
+use zephyr_scheduler::config::Config;
+use zephyr_scheduler::core::scheduler::Scheduler;
+use zephyr_scheduler::state::StateManager;
 
 #[tokio::test]
 async fn test_end_to_end_config_load_and_scheduler_init() {

@@ -2,7 +2,7 @@ use clap::Parser;
 use std::path::PathBuf;
 use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
-use zephyr::util::{expand_tilde, log_level_from_str};
+use zephyr_scheduler::util::{expand_tilde, log_level_from_str};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -51,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
         let state_path = if let Some(ref cli_path) = args.state_path {
             cli_path.clone()
         } else if config_path.exists() {
-            match zephyr::config::Config::load(&config_path) {
+            match zephyr_scheduler::config::Config::load(&config_path) {
                 Ok(config) => config.general.state_path,
                 Err(e) => {
                     error!("Failed to load config for state path: {}", e);
@@ -64,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
 
         info!("Resetting state database at {:?}", state_path);
         let state_path = expand_tilde(&state_path);
-        let state_manager = zephyr::state::StateManager::new(&state_path)?;
+        let state_manager = zephyr_scheduler::state::StateManager::new(&state_path)?;
         state_manager.reset_state()?;
         info!("State database reset successfully");
         return Ok(());
@@ -73,32 +73,32 @@ async fn main() -> anyhow::Result<()> {
     if args.install_service {
         init_tracing(Level::INFO);
         info!("Installing service...");
-        zephyr::service::install_service()?;
+        zephyr_scheduler::service::install_service()?;
         return Ok(());
     }
 
     if args.uninstall_service {
         init_tracing(Level::INFO);
         info!("Uninstalling service...");
-        zephyr::service::uninstall_service()?;
+        zephyr_scheduler::service::uninstall_service()?;
         return Ok(());
     }
 
     if args.start_service {
         init_tracing(Level::INFO);
         info!("Starting service...");
-        zephyr::service::start_service()?;
+        zephyr_scheduler::service::start_service()?;
         return Ok(());
     }
 
     if args.stop_service {
         init_tracing(Level::INFO);
         info!("Stopping service...");
-        zephyr::service::stop_service()?;
+        zephyr_scheduler::service::stop_service()?;
         return Ok(());
     }
 
-    let config = match zephyr::config::Config::load(&config_path) {
+    let config = match zephyr_scheduler::config::Config::load(&config_path) {
         Ok(c) => c,
         Err(e) => {
             init_tracing(Level::INFO);
@@ -133,7 +133,7 @@ async fn main() -> anyhow::Result<()> {
         config.general.min_interval_seconds,
         config.general.max_immediate_executions
     );
-    let mut scheduler = zephyr::core::scheduler::Scheduler::new_with_config(
+    let mut scheduler = zephyr_scheduler::core::scheduler::Scheduler::new_with_config(
         config.commands,
         state_path,
         config.general.max_immediate_executions,

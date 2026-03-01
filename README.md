@@ -82,7 +82,13 @@ Example configurations are in the `examples/` folder:
 ## Installation
 
 ```sh
-git clone git@github.com:ztroop/zephyr.git && cd ./zephyr
+cargo install zephyr-scheduler
+```
+
+This installs the `zephyr` binary. Or install from source:
+
+```sh
+git clone git@github.com:ztroop/zephyr.git && cd zephyr
 cargo install --path .
 ```
 

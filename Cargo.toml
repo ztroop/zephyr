@@ -1,5 +1,5 @@
 [package]
-name = "zephyr"
+name = "zephyr-scheduler"
 version = "0.3.2"
 edition = "2021"
 authors = ["Zackary Troop"]
@@ -11,6 +11,10 @@ documentation = "https://github.com/ztroop/zephyr"
 readme = "README.md"
 keywords = ["scheduler", "cron", "task", "automation", "systemd", "launchd", "unix"]
 categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "zephyr"
+path = "src/main.rs"
 
 [dependencies]
 tokio = { version = "1.36", features = ["full"] }
