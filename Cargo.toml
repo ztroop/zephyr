@@ -9,7 +9,7 @@ repository = "https://github.com/ztroop/zephyr"
 homepage = "https://github.com/ztroop/zephyr"
 documentation = "https://github.com/ztroop/zephyr"
 readme = "README.md"
-keywords = ["scheduler", "cron", "task", "automation", "systemd", "launchd", "unix"]
+keywords = ["scheduler", "cron", "task", "automation", "unix"]
 categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
