@@ -48,17 +48,18 @@ impl CommandExecutor for DefaultExecutor {
 
         if let Some(env) = &command.environment {
             for (key, value) in env {
-                let expanded_value = if value.starts_with("${") && value.ends_with('}') && value.len() > 3 {
-                    let var_name = &value[2..value.len() - 1];
-                    std::env::var(var_name).unwrap_or_else(|_| value.clone())
-                } else if value.starts_with('$') {
-                    let var_name = value.trim_start_matches('$');
-                    std::env::var(var_name).unwrap_or_else(|_| value.clone())
-                } else if value.starts_with('~') {
-                    expand_tilde(Path::new(value)).to_string_lossy().to_string()
-                } else {
-                    value.clone()
-                };
+                let expanded_value =
+                    if value.starts_with("${") && value.ends_with('}') && value.len() > 3 {
+                        let var_name = &value[2..value.len() - 1];
+                        std::env::var(var_name).unwrap_or_else(|_| value.clone())
+                    } else if value.starts_with('$') {
+                        let var_name = value.trim_start_matches('$');
+                        std::env::var(var_name).unwrap_or_else(|_| value.clone())
+                    } else if value.starts_with('~') {
+                        expand_tilde(Path::new(value)).to_string_lossy().to_string()
+                    } else {
+                        value.clone()
+                    };
                 cmd.env(key, expanded_value);
             }
         }
@@ -165,10 +166,7 @@ mod tests {
             max_runtime_minutes: Some(5),
             enabled: true,
             working_dir: None,
-            environment: Some(vec![(
-                "EXPANDED_HOME".to_string(),
-                "${HOME}".to_string(),
-            )]),
+            environment: Some(vec![("EXPANDED_HOME".to_string(), "${HOME}".to_string())]),
             immediate: false,
         };
 

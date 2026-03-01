@@ -118,8 +118,9 @@ impl StateManager {
                         last_execution: row
                             .get::<_, Option<String>>(1)?
                             .map(|s| {
-                                s.parse()
-                                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+                                s.parse().map_err(|e| {
+                                    rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+                                })
                             })
                             .transpose()?,
                         next_scheduled: row

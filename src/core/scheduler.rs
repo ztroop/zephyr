@@ -135,7 +135,10 @@ impl Scheduler {
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("Failed to calculate next cron run"))
         } else {
-            Err(anyhow::anyhow!("Command '{}' has no schedule type", command.name))
+            Err(anyhow::anyhow!(
+                "Command '{}' has no schedule type",
+                command.name
+            ))
         }
     }
 
@@ -187,9 +190,7 @@ impl Scheduler {
             let was_sleeping = time_since_last_wake.num_minutes() > 5
                 && (match self.last_execution_time {
                     None => true,
-                    Some(last_exec) => {
-                        now.signed_duration_since(last_exec).num_minutes() > 5
-                    }
+                    Some(last_exec) => now.signed_duration_since(last_exec).num_minutes() > 5,
                 });
 
             if was_sleeping {
@@ -236,9 +237,7 @@ impl Scheduler {
                             "Rescheduling missed command without execution: {} (was scheduled for {})",
                             scheduled.command.name, scheduled.next_run
                         );
-                        if let Err(e) =
-                            self.schedule_next_run(scheduled.command.clone())
-                        {
+                        if let Err(e) = self.schedule_next_run(scheduled.command.clone()) {
                             error!(
                                 "Failed to reschedule command '{}': {}",
                                 scheduled.command.name, e
@@ -332,18 +331,13 @@ impl Scheduler {
                                     "Command '{}' execution timed out after {:?}",
                                     cmd_name, execution_timeout
                                 );
-                                match self.schedule_next_run(
-                                    command_to_run.command.clone(),
-                                ) {
+                                match self.schedule_next_run(command_to_run.command.clone()) {
                                     Ok(next_run) => {
-                                        if let Err(e) = self
-                                            .state_manager
-                                            .save_command_state(
-                                                &command_to_run.command,
-                                                Some(execution_start),
-                                                next_run,
-                                            )
-                                        {
+                                        if let Err(e) = self.state_manager.save_command_state(
+                                            &command_to_run.command,
+                                            Some(execution_start),
+                                            next_run,
+                                        ) {
                                             error!(
                                                 "Failed to save state for command '{}': {}",
                                                 cmd_name, e
@@ -412,11 +406,10 @@ impl Scheduler {
         // Save state after execution
         match self.schedule_next_run(command.clone()) {
             Ok(next_run) => {
-                if let Err(e) = self.state_manager.save_command_state(
-                    &command,
-                    Some(execution_start),
-                    next_run,
-                ) {
+                if let Err(e) =
+                    self.state_manager
+                        .save_command_state(&command, Some(execution_start), next_run)
+                {
                     error!("Failed to save state for command '{}': {}", command.name, e);
                 }
             }

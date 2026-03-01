@@ -6,11 +6,7 @@ use users::get_current_username;
 fn check_status(status: std::io::Result<ExitStatus>, operation: &'static str) -> Result<()> {
     let status = status.context(operation)?;
     if !status.success() {
-        anyhow::bail!(
-            "{} failed with exit code: {:?}",
-            operation,
-            status.code()
-        );
+        anyhow::bail!("{} failed with exit code: {:?}", operation, status.code());
     }
     Ok(())
 }
@@ -43,9 +39,7 @@ WantedBy=multi-user.target",
     fs::write(service_path, service_content).context("Failed to write systemd service file")?;
 
     check_status(
-        Command::new("systemctl")
-            .args(["daemon-reload"])
-            .status(),
+        Command::new("systemctl").args(["daemon-reload"]).status(),
         "Failed to reload systemd daemon",
     )?;
 
@@ -137,9 +131,7 @@ pub fn uninstall_service() -> Result<()> {
         .context("Failed to remove systemd service file")?;
 
     check_status(
-        Command::new("systemctl")
-            .args(["daemon-reload"])
-            .status(),
+        Command::new("systemctl").args(["daemon-reload"]).status(),
         "Failed to reload systemd daemon",
     )?;
 
